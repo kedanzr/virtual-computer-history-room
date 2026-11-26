@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0f2747">
+  <title>Virtual Computer History Room</title>
+
+  <!-- A-Frame. Untuk mode offline, unduh berkas ini lalu simpan di assets/ dan ubah src-nya. -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+  <script>
+    // Menjaga posisi kamera tetap di dalam ruangan saat berjalan dengan W A S D / tombol panah.
+    AFRAME.registerComponent('room-bounds', {
+      schema: { limit: { type: 'number', default: 7.3 } },
+      tick: function () {
+        var p = this.el.object3D.position, l = this.data.limit;
+        p.x = Math.max(-l, Math.min(l, p.x));
+        p.z = Math.max(-l, Math.min(l, p.z));
+      }
+    });
+  </script>
+
+  <style>
+    :root {
+      --ink: #0f2747;
+      --blue: #1f5fd1;
+      --blue-deep: #17409a;
+      --sky: #dbe8fb;
+      --mist: #eef2f7;
+      --steel: #c9d0da;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden; background: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 3px solid #ffb703; outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    /* Layar pembuka */
+    #intro {
+      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center;
+      padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+      background: linear-gradient(135deg, rgba(238,242,247,.95) 0%, rgba(219,232,251,.92) 60%, rgba(180,208,248,.9) 100%);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      overflow-y: auto;
+    }
+    #intro .inner { max-width: 640px; margin: 0 auto 0 clamp(0px, 8vw, 120px); }
+    #intro h1 {
+      margin: 0 0 16px; color: var(--ink); font-weight: 800; letter-spacing: .01em;
+      font-size: clamp(30px, 6.4vw, 66px); line-height: 1.04;
+    }
+    #intro p.lead { margin: 0 0 22px; color: #2c4468; font-size: clamp(16px, 2.2vw, 20px); line-height: 1.5; max-width: 52ch; }
+    #intro ul { margin: 0 0 28px; padding: 0 0 0 20px; color: #2c4468; font-size: clamp(14px, 1.9vw, 17px); line-height: 1.6; max-width: 56ch; }
+    #intro li { margin-bottom: 4px; }
+    #btn-start {
+      border: 0; border-radius: 999px; padding: 14px 40px; background: var(--blue); color: #fff;
+      font-size: 20px; font-weight: 700; box-shadow: 0 6px 18px rgba(31,95,209,.35);
+    }
+    #btn-start:disabled { background: #8d9bb0; box-shadow: none; cursor: progress; }
+    #btn-start:not(:disabled):hover { background: var(--blue-deep); }
+
+    /* HUD saat menjelajah */
+    #hud-top, #hud-nav {
+      position: fixed; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,.92); color: var(--ink);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    }
+    #hud-top {
+      top: 0; justify-content: space-between;
+      padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+      border-bottom: 3px solid var(--blue);
+    }
+    #hud-top .title { font-weight: 800; font-size: 15px; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #btn-back {
+      border: 2px solid var(--blue); background: #fff; color: var(--blue); border-radius: 999px;
+      padding: 6px 18px; font-weight: 700; font-size: 14px; flex: none;
+    }
+    #btn-back:hover { background: var(--sky); }
+    #hud-nav {
+      bottom: 0; justify-content: center; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      padding: 10px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+      border-top: 3px solid var(--blue);
+    }
+    #hud-nav button {
+      flex: none; border: 0; border-radius: 999px; padding: 9px 16px; background: var(--mist); color: var(--ink);
+      font-weight: 600; font-size: 14px; white-space: nowrap;
+    }
+    #hud-nav button:hover { background: var(--sky); }
+    #hud-nav button[aria-current="true"] { background: var(--blue); color: #fff; }
+    @media (max-width: 640px) {
+      #hud-nav { justify-content: flex-start; }
+      #hud-top .title { font-size: 13px; }
+    }
+
+    #fade { position: fixed; inset: 0; z-index: 10; background: #0f2747; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+    #fade.on { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { #fade { transition: none; } }
+
+    #toast {
+      position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 25; max-width: min(92vw, 520px);
+      background: #fff3cd; color: #5c4500; border: 1px solid #e6c65c; border-radius: 10px; padding: 10px 16px; font-size: 14px; line-height: 1.4;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Layar pembuka -->
+  <section id="intro" aria-labelledby="judul">
+    <div class="inner">
+      <h1 id="judul">VIRTUAL COMPUTER HISTORY ROOM</h1>
+      <p class="lead">Jelajahi sejarah perkembangan komputer di ruang museum teknologi 3D, dari tabung vakum hingga kecerdasan buatan.</p>
+      <ul>
+        <li>Geser layar (HP) atau tarik dengan mouse (laptop) untuk melihat sekeliling.</li>
+        <li>Gunakan tombol di bagian bawah untuk berpindah ke video atau ke tiap dinding.</li>
+        <li>Di laptop, tombol W A S D atau panah juga bisa dipakai untuk berjalan.</li>
+        <li>Video tidak berjalan otomatis. Tekan PLAY pada layar besar di dinding depan.</li>
+      </ul>
+      <button id="btn-start" type="button" disabled>Memuat ruangan...</button>
+    </div>
+  </section>
+
+  <!-- Kontrol saat menjelajah -->
+  <header id="hud-top" hidden>
+    <span class="title">Virtual Computer History Room</span>
+    <button id="btn-back" type="button">Kembali</button>
+  </header>
+  <nav id="hud-nav" aria-label="Navigasi ruangan" hidden>
+    <button type="button" data-go="video">Layar video</button>
+    <button type="button" data-go="d1">Dinding 1</button>
+    <button type="button" data-go="d2">Dinding 2</button>
+    <button type="button" data-go="d3">Dinding 3</button>
+    <button type="button" data-go="d4">Dinding 4</button>
+    <button type="button" data-go="d5">Dinding 5</button>
+  </nav>
+  <div id="fade"></div>
+  <div id="toast" role="status" hidden></div>
+
+  <!-- Video (tanpa autoplay). Ganti berkas dengan video Anda, namanya tetap sejarah-komputer.mp4 -->
+  <video id="vid" src="assets/videos/sejarah-komputer.mp4" preload="metadata" playsinline webkit-playsinline crossorigin="anonymous" style="display:none"></video>
+
+  <a-scene
+    cursor="rayOrigin: mouse; fuse: false"
+    raycaster="objects: .clickable; far: 40"
+    renderer="antialias: true"
+    background="color: #0f2747"
+    loading-screen="enabled: false"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <!-- Kamera: geser/tarik untuk melihat sekeliling, W A S D untuk berjalan -->
+    <a-entity id="cam" camera="fov: 80"
+              position="0 1.6 5.5"
+              look-controls="touchEnabled: true; magicWindowTrackingEnabled: false"
+              wasd-controls="acceleration: 30"
+              room-bounds></a-entity>
+
+    <!-- Pencahayaan nyaman -->
+    <a-entity light="type: ambient; color: #ffffff; intensity: 0.8"></a-entity>
+    <a-entity light="type: hemisphere; color: #ffffff; groundColor: #9db0cf; intensity: 0.55"></a-entity>
+    <a-entity light="type: point; color: #fff6e8; intensity: 0.45; distance: 26; decay: 1" position="-4 4.8 -4"></a-entity>
+    <a-entity light="type: point; color: #fff6e8; intensity: 0.45; distance: 26; decay: 1" position="4 4.8 -4"></a-entity>
+    <a-entity light="type: point; color: #fff6e8; intensity: 0.45; distance: 26; decay: 1" position="-4 4.8 4"></a-entity>
+    <a-entity light="type: point; color: #fff6e8; intensity: 0.45; distance: 26; decay: 1" position="4 4.8 4"></a-entity>
+  </a-scene>
+
+  <script>
+  (function () {
+    'use strict';
+
+    /* ===================== DATA (mudah diubah) ===================== */
+    var IMG = 'assets/images/';
+    var BOARDS = [
+      { id: 'd1', wall: 'left', x: -3.8, title: 'Generasi Pertama', era: '1940–1950-an',
+        tech: 'Teknologi tabung vakum', example: 'Contoh: ENIAC (1946)', img: 'gen1-eniac.png',
+        points: ['Memakai ±18.000 tabung vakum', 'Berat ±30 ton, memenuhi satu ruangan', 'Panas, boros listrik, mudah rusak', 'Diprogram dengan kabel dan saklar'] },
+      { id: 'd2', wall: 'left', x: 3.8, title: 'Generasi Kedua', era: '1950–1960-an',
+        tech: 'Teknologi transistor', example: 'Contoh: IBM 1401 (1959)', img: 'gen2-ibm1401.png',
+        points: ['Transistor ditemukan di Bell Labs (1947)', 'Lebih kecil, hemat listrik, lebih andal', 'Lahir bahasa FORTRAN dan COBOL', 'IBM 1401 dipakai untuk data bisnis'] },
+      { id: 'd3', wall: 'right', x: -3.8, title: 'Generasi Ketiga', era: '1960–1970-an',
+        tech: 'Teknologi Integrated Circuit (IC)', example: 'Contoh: IBM System/360 (1964)', img: 'gen3-system360.png',
+        points: ['Kilby dan Noyce mengembangkan IC (1958–1959)', 'Komputer lebih ringkas, cepat, dan andal', 'System/360: satu keluarga komputer', 'Sering dijadikan contoh generasi ketiga'] },
+      { id: 'd4', wall: 'right', x: 3.8, title: 'Generasi Keempat', era: '1970-an dan seterusnya',
+        tech: 'Teknologi mikroprosesor', example: 'Contoh: IBM PC (1981)', img: 'gen4-ibmpc.png',
+        points: ['Intel 4004 (1971): CPU dalam satu chip', 'Komputer personal masuk rumah dan kantor', 'Apple II (1977) ikut memopulerkan PC', 'IBM PC diluncurkan pada 1981'] },
+      { id: 'd5', wall: 'back', x: 0, title: 'Komputer Modern', era: 'Masa kini',
+        tech: 'AI, cloud computing, dan teknologi modern', example: 'Contoh: pusat data dan AI', img: 'gen5-modern.png',
+        points: ['Internet menghubungkan komputer sedunia', 'Cloud computing: data diolah di pusat data', 'AI membantu mengenali pola dan memahami bahasa', 'Ponsel pintar: komputer di genggaman'] }
+    ];
+
+    var ROOM = 8;            // setengah lebar ruangan (ruangan 16 x 16 m)
+    var HEIGHT = 5.5;        // tinggi ruangan
+    var BW = 6.6, BH = 4.0;  // ukuran papan informasi (m)
+    var UNIT = 280;          // piksel kanvas per meter
+    var FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+    var WALLS = {
+      front: { pos: '0 0 -8', rot: '0 0 0',   color: '#1b3a78', stripe: '#9fc0f5' },
+      back:  { pos: '0 0 8',  rot: '0 180 0', color: '#f4f6f9', stripe: '#1f5fd1' },
+      left:  { pos: '-8 0 0', rot: '0 90 0',  color: '#f4f6f9', stripe: '#1f5fd1' },
+      right: { pos: '8 0 0',  rot: '0 -90 0', color: '#f4f6f9', stripe: '#1f5fd1' }
+    };
+
+    /* ===================== Util ===================== */
+    var scene = document.querySelector('a-scene');
+    var cam = document.getElementById('cam');
+    var vid = document.getElementById('vid');
+
+    function el(tag, attrs, parent) {
+      var e = document.createElement(tag);
+      for (var k in attrs) { e.setAttribute(k, attrs[k]); }
+      (parent || scene).appendChild(e);
+      return e;
+    }
+    function sharpen(entity) {
+      entity.addEventListener('materialtextureloaded', function (ev) {
+        var t = ev.detail && ev.detail.texture;
+        if (t) { t.anisotropy = 8; t.needsUpdate = true; }
+      });
+    }
+    function refreshTexture(entity) {
+      var m = entity.getObject3D('mesh');
+      if (m && m.material && m.material.map) { m.material.map.needsUpdate = true; }
+    }
+    function roundRect(g, x, y, w, h, r) {
+      g.beginPath();
+      g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.arcTo(x + w, y, x + w, y + r, r);
+      g.lineTo(x + w, y + h - r); g.arcTo(x + w, y + h, x + w - r, y + h, r);
+      g.lineTo(x + r, y + h); g.arcTo(x, y + h, x, y + h - r, r);
+      g.lineTo(x, y + r); g.arcTo(x, y, x + r, y, r); g.closePath();
+    }
+    function wrapText(g, text, maxW) {
+      var words = text.split(' '), lines = [], line = '';
+      words.forEach(function (w) {
+        var test = line ? line + ' ' + w : w;
+        if (g.measureText(test).width > maxW && line) { lines.push(line); line = w; } else { line = test; }
+      });
+      if (line) { lines.push(line); }
+      return lines;
+    }
+    function makeCanvas(id, w, h) {
+      var c = document.createElement('canvas');
+      c.id = id; c.width = w; c.height = h; c.style.display = 'none';
+      document.body.appendChild(c);
+      return c;
+    }
+
+    /* ===================== Papan informasi (kanvas -> tekstur) ===================== */
+    function drawBoard(d) {
+      var c = makeCanvas('board-' + d.id, Math.round(BW * UNIT), Math.round(BH * UNIT));
+      var g = c.getContext('2d'), U = UNIT, W = c.width, H = c.height;
+
+      g.fillStyle = '#f7f9fc'; g.fillRect(0, 0, W, H);
+
+      // Header
+      var hh = 0.7 * U, grad = g.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, '#17409a'); grad.addColorStop(1, '#2a6fe0');
+      g.fillStyle = grad; g.fillRect(0, 0, W, hh);
+      g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillStyle = '#ffffff';
+      g.font = '800 ' + (0.33 * U) + 'px ' + FONT;
+      g.fillText(d.title, 0.2 * U, hh / 2 + 3);
+      g.textAlign = 'right'; g.fillStyle = '#cfe0ff';
+      g.font = '600 ' + (0.17 * U) + 'px ' + FONT;
+      g.fillText(d.era, W - 0.2 * U, hh / 2 + 3);
+
+      // Teknologi
+      g.textAlign = 'left'; g.fillStyle = '#17409a';
+      g.font = '700 ' + (0.21 * U) + 'px ' + FONT;
+      g.fillText(d.tech, 0.2 * U, 1.02 * U);
+      g.fillStyle = '#c9d0da'; g.fillRect(0.2 * U, 1.27 * U, W - 0.4 * U, 3);
+
+      // Bingkai gambar (gambar sendiri dipasang sebagai a-image di atasnya)
+      g.fillStyle = '#dbe8fb';
+      g.fillRect(0.2 * U - 8, 1.5 * U - 8, 2.9 * U + 16, 2.175 * U + 16);
+
+      // Teks penjelasan
+      var x0 = 3.45 * U, maxW = W - x0 - 0.2 * U;
+      g.textBaseline = 'top'; g.fillStyle = '#0f2747';
+      g.font = '800 ' + (0.165 * U) + 'px ' + FONT;
+      var exLines = wrapText(g, d.example, maxW), y = 1.5 * U;
+      exLines.forEach(function (ln) { g.fillText(ln, x0, y); y += 0.2 * U; });
+      y += 0.1 * U;
+
+      g.font = '500 ' + (0.15 * U) + 'px ' + FONT;
+      var lh = 0.215 * U, indent = 0.2 * U;
+      d.points.forEach(function (p) {
+        var lines = wrapText(g, p, maxW - indent);
+        g.fillStyle = '#1f5fd1';
+        g.beginPath(); g.arc(x0 + 0.06 * U, y + 0.085 * U, 0.04 * U, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#1b2b45';
+        lines.forEach(function (ln) { g.fillText(ln, x0 + indent, y); y += lh; });
+        y += 0.07 * U;
+      });
+
+      // Garis bawah
+      g.fillStyle = '#1f5fd1'; g.fillRect(0, H - 0.06 * U, W, 0.06 * U);
+      return c;
+    }
+
+    function buildBoard(d, wallEl) {
+      drawBoard(d);
+      var grp = el('a-entity', { position: d.x + ' 2.55 0.02' }, wallEl);
+      el('a-box', { width: BW + 0.14, height: BH + 0.14, depth: 0.05, color: '#aeb8c8', position: '0 0 0' }, grp);
+      var plane = el('a-plane', { width: BW, height: BH, material: 'shader: flat; src: #board-' + d.id, position: '0 0 0.03' }, grp);
+      sharpen(plane);
+      var pic = el('a-image', { src: IMG + d.img, width: 2.9, height: 2.175, position: '-1.65 -0.5875 0.036' }, grp);
+      sharpen(pic);
+      // lampu sorot di atas papan
+      el('a-box', { width: BW + 0.14, height: 0.06, depth: 0.14, material: 'shader: flat; color: #ffffff', position: '0 2.08 0.06' }, grp);
+    }
+
+    /* ===================== Ruangan ===================== */
+    function buildRoom() {
+      // Lantai modern (tekstur ubin lokal)
+      el('a-plane', { rotation: '-90 0 0', width: 16, height: 16,
+        material: 'src: ' + IMG + 'floor-tile.png; repeat: 8 8; roughness: 0.45; metalness: 0.05' });
+      // Langit-langit + strip lampu
+      el('a-plane', { rotation: '90 0 0', position: '0 ' + HEIGHT + ' 0', width: 16, height: 16, material: 'color: #f4f6fa; roughness: 1' });
+      [-4.5, 0, 4.5].forEach(function (z) {
+        el('a-box', { width: 11, height: 0.05, depth: 0.45, position: '0 ' + (HEIGHT - 0.03) + ' ' + z, material: 'shader: flat; color: #ffffff' });
+      });
+
+      // Dinding
+      var wallEls = {};
+      Object.keys(WALLS).forEach(function (name) {
+        var w = WALLS[name];
+        var g = el('a-entity', { position: w.pos, rotation: w.rot });
+        el('a-plane', { width: 16, height: HEIGHT, position: '0 ' + (HEIGHT / 2) + ' 0', material: 'color: ' + w.color + '; roughness: 0.95' }, g);
+        el('a-plane', { width: 16, height: 0.55, position: '0 0.275 0.01', material: 'color: #c9d0da; roughness: 0.9' }, g);
+        el('a-plane', { width: 16, height: 0.06, position: '0 0.58 0.012', material: 'shader: flat; color: ' + w.stripe }, g);
+        el('a-plane', { width: 16, height: 0.3, position: '0 ' + (HEIGHT - 0.15) + ' 0.01', material: 'color: #c9d0da; roughness: 0.9' }, g);
+        wallEls[name] = g;
+      });
+
+      // Papan informasi dinding 1-5
+      BOARDS.forEach(function (d) { buildBoard(d, wallEls[d.wall]); });
+
+      // Judul ruangan (dinding belakang, di atas Dinding 5)
+      var sign = makeCanvas('sign', 2100, 150), sg = sign.getContext('2d');
+      sg.fillStyle = '#17409a'; sg.fillRect(0, 0, 2100, 150);
+      sg.fillStyle = '#ffffff'; sg.font = '800 96px ' + FONT; sg.textAlign = 'center'; sg.textBaseline = 'middle';
+      sg.fillText('VIRTUAL COMPUTER HISTORY ROOM', 1050, 80);
+      var signEl = el('a-plane', { width: 7, height: 0.5, position: '0 4.92 0.03', material: 'shader: flat; src: #sign' }, wallEls.back);
+      sharpen(signEl);
+
+      // Layar video di dinding depan
+      var f = wallEls.front;
+      el('a-box', { width: 7.1, height: 4.125, depth: 0.16, color: '#0b1b36', position: '0 2.95 0.08' }, f);
+      el('a-video', { src: '#vid', width: 6.8, height: 3.825, position: '0 2.95 0.17' }, f);
+      var poster = el('a-image', { id: 'poster', src: IMG + 'video-poster.png', width: 6.8, height: 3.825, position: '0 2.95 0.175' }, f);
+      sharpen(poster);
+
+      // Tombol PLAY dan PAUSE
+      var playC = makeCanvas('btn-play', 440, 160), pauseC = makeCanvas('btn-pause', 440, 160);
+      function drawBtn(c, label, active) {
+        var g = c.getContext('2d');
+        g.clearRect(0, 0, c.width, c.height);
+        g.fillStyle = active ? '#1f5fd1' : '#8d9bb0';
+        roundRect(g, 4, 4, c.width - 8, c.height - 8, 76); g.fill();
+        g.fillStyle = '#ffffff'; g.font = '800 ' + (c.height * 0.4) + 'px ' + FONT;
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(label, c.width / 2, c.height / 2 + 4);
+      }
+      drawBtn(playC, 'PLAY', true); drawBtn(pauseC, 'PAUSE', false);
+      var playEl = el('a-plane', { class: 'clickable', width: 1.9, height: 0.69, position: '-1.2 0.4 0.05', material: 'shader: flat; transparent: true; src: #btn-play' }, f);
+      var pauseEl = el('a-plane', { class: 'clickable', width: 1.9, height: 0.69, position: '1.2 0.4 0.05', material: 'shader: flat; transparent: true; src: #btn-pause' }, f);
+
+      function setState(playing) {
+        drawBtn(playC, 'PLAY', !playing); drawBtn(pauseC, 'PAUSE', playing);
+        refreshTexture(playEl); refreshTexture(pauseEl);
+      }
+      playEl.addEventListener('click', function () {
+        var p = vid.play();
+        if (p && p.catch) { p.catch(function () { toast('Video tidak dapat diputar. Pastikan berkas assets/videos/sejarah-komputer.mp4 tersedia.'); }); }
+      });
+      pauseEl.addEventListener('click', function () { vid.pause(); });
+      vid.addEventListener('play', function () { poster.setAttribute('visible', false); setState(true); });
+      vid.addEventListener('pause', function () { setState(false); });
+      vid.addEventListener('ended', function () { setState(false); });
+      vid.addEventListener('error', function () { toast('Video belum ditemukan. Letakkan berkas sejarah-komputer.mp4 di folder assets/videos/.'); });
+
+      // Bangku
+      [-3.2, 3.2].forEach(function (x) {
+        el('a-box', { width: 0.8, height: 0.45, depth: 3, position: x + ' 0.225 0', material: 'color: #dfe5ee; roughness: 0.6' });
+        el('a-box', { width: 0.82, height: 0.06, depth: 3.02, position: x + ' 0.03 0', color: '#1f5fd1' });
+      });
+    }
+
+    /* ===================== Navigasi ===================== */
+    var toastTimer;
+    function toast(msg) {
+      var t = document.getElementById('toast');
+      t.textContent = msg; t.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { t.hidden = true; }, 6000);
+    }
+    function dist() { return window.innerWidth < window.innerHeight ? 6.4 : 4.4; }
+    var VIEWS = {
+      start: function () { return { x: 0, z: 5.5, yaw: 0 }; },
+      video: function () { return { x: 0, z: -0.5, yaw: 0 }; },
+      d1: function () { return { x: -ROOM + dist(), z: 3.8, yaw: 90 }; },
+      d2: function () { return { x: -ROOM + dist(), z: -3.8, yaw: 90 }; },
+      d3: function () { return { x: ROOM - dist(), z: -3.8, yaw: -90 }; },
+      d4: function () { return { x: ROOM - dist(), z: 3.8, yaw: -90 }; },
+      d5: function () { return { x: 0, z: ROOM - dist(), yaw: 180 }; }
+    };
+    function moveTo(p) {
+      cam.setAttribute('position', { x: p.x, y: 1.6, z: p.z });
+      var lc = cam.components['look-controls'];
+      if (lc && lc.yawObject && lc.pitchObject) {
+        lc.yawObject.rotation.y = THREE.MathUtils.degToRad(p.yaw);
+        lc.pitchObject.rotation.x = 0;
+      }
+    }
+    function goTo(name) {
+      var fade = document.getElementById('fade');
+      fade.classList.add('on');
+      setTimeout(function () { moveTo(VIEWS[name]()); fade.classList.remove('on'); }, 190);
+    }
+    function setControls(on) {
+      cam.setAttribute('look-controls', 'enabled', on);
+      cam.setAttribute('wasd-controls', 'enabled', on);
+    }
+
+    var intro = document.getElementById('intro');
+    var hudTop = document.getElementById('hud-top');
+    var hudNav = document.getElementById('hud-nav');
+    var navBtns = hudNav.querySelectorAll('button');
+    var startBtn = document.getElementById('btn-start');
+
+    function setActive(btn) {
+      for (var i = 0; i < navBtns.length; i++) { navBtns[i].removeAttribute('aria-current'); }
+      if (btn) { btn.setAttribute('aria-current', 'true'); }
+    }
+    function showRoom() {
+      intro.hidden = true; hudTop.hidden = false; hudNav.hidden = false;
+      setControls(true); setActive(null); moveTo(VIEWS.start());
+    }
+    function showIntro() {
+      vid.pause();
+      hudTop.hidden = true; hudNav.hidden = true; intro.hidden = false;
+      setControls(false); moveTo(VIEWS.start());
+      startBtn.focus();
+    }
+
+    startBtn.addEventListener('click', showRoom);
+    document.getElementById('btn-back').addEventListener('click', showIntro);
+    Array.prototype.forEach.call(navBtns, function (b) {
+      b.addEventListener('click', function () { setActive(b); goTo(b.getAttribute('data-go')); });
+    });
+
+    /* ===================== Mulai ===================== */
+    buildRoom();
+    function ready() {
+      vid.pause();                 // pastikan video tidak berjalan sebelum PLAY ditekan
+      setControls(false);          // kontrol aktif setelah tombol Mulai ditekan
+      startBtn.disabled = false; startBtn.textContent = 'Mulai';
+    }
+    if (scene.hasLoaded) { ready(); } else { scene.addEventListener('loaded', ready); }
+  })();
+  </script>
+</body>
+</html>
